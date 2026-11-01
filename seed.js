@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import { MongoClient } from 'mongodb';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -10,21 +10,6 @@ if (!uri) {
 }
 
 const COPIES = 5; // prottek boi er copy sonkha
-
-const bookSchema = new mongoose.Schema({
-  title: String,
-  author: String,
-  category: String,
-  image: String,
-  description: String,
-  totalCopies: Number,
-  availableCopies: Number,
-  userName: String,
-  userEmail: String,
-  createdAt: Date,
-});
-
-const Book = mongoose.model('Book', bookSchema);
 
 // [title, author, description]
 const catalog = {
@@ -121,19 +106,20 @@ const generateBooks = () => {
 };
 
 const seedDB = async () => {
+  const client = new MongoClient(uri);
   try {
-    await mongoose.connect(uri, { dbName: 'booknookDB' });
+    await client.connect();
     console.log('Database connected!');
 
-    await Book.deleteMany({});
-    const books = generateBooks();
-    await Book.insertMany(books);
-    console.log(`${books.length} ta english book add hoyeche (10 ta kore 5 category, ${COPIES} copy kore).`);
+    const books = client.db('booknookDB').collection('books');
+    await books.deleteMany({});
+    const result = await books.insertMany(generateBooks());
+    console.log(`${result.insertedCount} ta english book add hoyeche (10 ta kore 5 category, ${COPIES} copy kore).`);
   } catch (err) {
     console.error('Seeding failed:', err.message);
     process.exitCode = 1;
   } finally {
-    await mongoose.connection.close();
+    await client.close();
   }
 };
 
