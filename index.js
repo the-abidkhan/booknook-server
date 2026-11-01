@@ -15,10 +15,32 @@ app.use(express.json());
 const client = new MongoClient(process.env.DB_URI);
 let booksCollection;
 let borrowsCollection;
+let connecting;
 
 const CATEGORIES = ['Fiction', 'Science', 'History', 'Kids', 'Others'];
 
-// ---------- JWT middleware ----------
+async function connectDB() {
+  if (!connecting) {
+    connecting = client.connect().then(() => {
+      const db = client.db('booknookDB');
+      booksCollection = db.collection('books');
+      borrowsCollection = db.collection('borrows');
+      console.log('MongoDB connected!');
+    });
+  }
+  return connecting;
+}
+
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error('DB connection failed:', err.message);
+    res.status(500).send({ message: 'Database connect hoy ni' });
+  }
+});
+
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -30,28 +52,20 @@ const verifyToken = (req, res, next) => {
     if (err) {
       return res.status(403).send({ message: 'Forbidden: token valid na ba expire hoye geche' });
     }
-    // email sob somoy token theke, body theke kokhono na
     req.user = { email: decoded.email, name: decoded.name };
     next();
   });
 };
 
-// ?email= thakle JWT lagbe, na thakle public
 const requireAuthIfEmail = (req, res, next) =>
   req.query.email ? verifyToken(req, res, next) : next();
 
 const isValidId = (id) => ObjectId.isValid(id);
 
-// ---------- Root ----------
 app.get('/', (req, res) => {
   res.send('BookNook server is running...');
 });
 
-// ---------- Books ----------
-
-// GET /books : public
-// ?sort=latest&limit=6  -> Home New Arrivals
-// ?email=me@mail.com    -> My Books (JWT lagbe, nijer email hote hobe)
 app.get('/books', requireAuthIfEmail, async (req, res) => {
   try {
     const { sort, limit, email } = req.query;
@@ -76,7 +90,6 @@ app.get('/books', requireAuthIfEmail, async (req, res) => {
   }
 });
 
-// GET /books/:id : JWT
 app.get('/books/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -91,7 +104,6 @@ app.get('/books/:id', verifyToken, async (req, res) => {
   }
 });
 
-// POST /books : JWT
 app.post('/books', verifyToken, async (req, res) => {
   try {
     const { title, author, category, image, description, totalCopies } = req.body;
@@ -128,7 +140,6 @@ app.post('/books', verifyToken, async (req, res) => {
   }
 });
 
-// PATCH /books/:id : JWT + sudhu owner
 app.patch('/books/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -183,7 +194,6 @@ app.patch('/books/:id', verifyToken, async (req, res) => {
   }
 });
 
-// DELETE /books/:id : JWT + sudhu owner
 app.delete('/books/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -195,7 +205,6 @@ app.delete('/books/:id', verifyToken, async (req, res) => {
       return res.status(403).send({ message: 'Tumi sudhu nijer boi delete korte parbe' });
     }
 
-    // kew borrow kore thakle delete block
     const activeBorrows = await borrowsCollection.countDocuments({ bookId: id });
     if (activeBorrows > 0) {
       return res.status(409).send({
@@ -211,9 +220,6 @@ app.delete('/books/:id', verifyToken, async (req, res) => {
   }
 });
 
-// ---------- Borrows ----------
-
-// POST /borrows : JWT
 app.post('/borrows', verifyToken, async (req, res) => {
   try {
     const { bookId } = req.body;
@@ -224,7 +230,6 @@ app.post('/borrows', verifyToken, async (req, res) => {
     const book = await booksCollection.findOne({ _id: new ObjectId(bookId) });
     if (!book) return res.status(404).send({ message: 'Book pawa jayni' });
 
-    // No double borrow
     const already = await borrowsCollection.findOne({
       bookId,
       userEmail: req.user.email,
@@ -233,7 +238,6 @@ app.post('/borrows', verifyToken, async (req, res) => {
       return res.status(409).send({ message: 'Tumi ei boi ta already borrow korecho' });
     }
 
-    // Copies 1 komano (sudhu jodi availableCopies > 0 hoy)
     const updated = await booksCollection.findOneAndUpdate(
       { _id: new ObjectId(bookId), availableCopies: { $gt: 0 } },
       { $inc: { availableCopies: -1 } },
@@ -244,7 +248,7 @@ app.post('/borrows', verifyToken, async (req, res) => {
     }
 
     const borrowDate = new Date();
-    const returnDate = new Date(borrowDate.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 din
+    const returnDate = new Date(borrowDate.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     const borrow = {
       bookId,
@@ -260,7 +264,6 @@ app.post('/borrows', verifyToken, async (req, res) => {
       const result = await borrowsCollection.insertOne(borrow);
       res.status(201).send(result);
     } catch (insertErr) {
-      // borrow save na hole copy ferot dao
       await booksCollection.updateOne(
         { _id: new ObjectId(bookId) },
         { $inc: { availableCopies: 1 } }
@@ -273,7 +276,6 @@ app.post('/borrows', verifyToken, async (req, res) => {
   }
 });
 
-// GET /borrows : JWT, sudhu nijer borrow
 app.get('/borrows', verifyToken, async (req, res) => {
   try {
     const result = await borrowsCollection
@@ -287,7 +289,6 @@ app.get('/borrows', verifyToken, async (req, res) => {
   }
 });
 
-// DELETE /borrows/:id : JWT, return book
 app.delete('/borrows/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -312,20 +313,13 @@ app.delete('/borrows/:id', verifyToken, async (req, res) => {
   }
 });
 
-// ---------- Start ----------
-async function start() {
-  try {
-    await client.connect();
-    const db = client.db('booknookDB');
-    booksCollection = db.collection('books');
-    borrowsCollection = db.collection('borrows');
-    console.log('MongoDB connected!');
-
-    app.listen(port, () => console.log(`BookNook server running on port ${port}`));
-  } catch (err) {
-    console.error('DB connection failed:', err.message);
-    process.exit(1);
-  }
+if (process.env.NODE_ENV !== 'production') {
+  connectDB()
+    .then(() => app.listen(port, () => console.log(`BookNook server running on port ${port}`)))
+    .catch((err) => {
+      console.error('DB connection failed:', err.message);
+      process.exit(1);
+    });
 }
 
-start();
+export default app;
