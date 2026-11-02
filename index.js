@@ -90,7 +90,8 @@ app.get('/books', requireAuthIfEmail, async (req, res) => {
   }
 });
 
-app.get('/books/:id', verifyToken, async (req, res) => {
+// verifyToken soriye deya hoyeche jate publically book details dekha jay
+app.get('/books/:id', async (req, res) => {
   try {
     const { id } = req.params;
     if (!isValidId(id)) return res.status(400).send({ message: 'Invalid book id' });
