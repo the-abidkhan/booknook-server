@@ -37,20 +37,24 @@ app.use(async (req, res, next) => {
     next();
   } catch (err) {
     console.error('DB connection failed:', err.message);
-    res.status(500).send({ message: 'Database connect hoy ni' });
+    res.status(500).send({ message: 'Could not connect to the database' });
   }
 });
 
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).send({ message: 'Unauthorized: token pawa jayni' });
+    return res.status(401).send({ message: 'Unauthorized: please login first' });
   }
   const token = authHeader.split(' ')[1];
 
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) {
-      return res.status(403).send({ message: 'Session expired. Please login again' });
+      // TEMP DEBUG: 403 fix hole ei duita line theke err.message soriye dio
+      console.error('JWT error:', err.message);
+      return res
+        .status(403)
+        .send({ message: `Session expired (${err.message}). Please login again` });
     }
     req.user = { email: decoded.email, name: decoded.name };
     next();
@@ -73,7 +77,7 @@ app.get('/books', requireAuthIfEmail, async (req, res) => {
 
     if (email) {
       if (email !== req.user.email) {
-        return res.status(403).send({ message: 'Forbidden: onner boi dekha jabe na' });
+        return res.status(403).send({ message: 'You can only view your own books' });
       }
       filter.userEmail = email;
     }
@@ -86,7 +90,7 @@ app.get('/books', requireAuthIfEmail, async (req, res) => {
     res.send(await cursor.toArray());
   } catch (err) {
     console.error(err);
-    res.status(500).send({ message: 'Books load korte problem hoyeche' });
+    res.status(500).send({ message: 'Could not load books' });
   }
 });
 
@@ -96,11 +100,11 @@ app.get('/books/:id', async (req, res) => {
     if (!isValidId(id)) return res.status(400).send({ message: 'Invalid book id' });
 
     const book = await booksCollection.findOne({ _id: new ObjectId(id) });
-    if (!book) return res.status(404).send({ message: 'Book pawa jayni' });
+    if (!book) return res.status(404).send({ message: 'Book not found' });
     res.send(book);
   } catch (err) {
     console.error(err);
-    res.status(500).send({ message: 'Book load korte problem hoyeche' });
+    res.status(500).send({ message: 'Could not load the book' });
   }
 });
 
@@ -110,13 +114,13 @@ app.post('/books', verifyToken, async (req, res) => {
     const copies = Number(totalCopies);
 
     if (!title?.trim() || !author?.trim() || !image?.trim() || !description?.trim()) {
-      return res.status(400).send({ message: 'Shob field puron koro' });
+      return res.status(400).send({ message: 'Please fill in all fields' });
     }
     if (!CATEGORIES.includes(category)) {
-      return res.status(400).send({ message: 'Category valid na' });
+      return res.status(400).send({ message: 'Invalid category' });
     }
     if (!Number.isInteger(copies) || copies < 1) {
-      return res.status(400).send({ message: 'Total copies kombe kom 1 hote hobe' });
+      return res.status(400).send({ message: 'Total copies must be at least 1' });
     }
 
     const newBook = {
@@ -136,7 +140,7 @@ app.post('/books', verifyToken, async (req, res) => {
     res.status(201).send(result);
   } catch (err) {
     console.error(err);
-    res.status(500).send({ message: 'Book add korte problem hoyeche' });
+    res.status(500).send({ message: 'Could not add the book' });
   }
 });
 
@@ -146,9 +150,9 @@ app.patch('/books/:id', verifyToken, async (req, res) => {
     if (!isValidId(id)) return res.status(400).send({ message: 'Invalid book id' });
 
     const book = await booksCollection.findOne({ _id: new ObjectId(id) });
-    if (!book) return res.status(404).send({ message: 'Book pawa jayni' });
+    if (!book) return res.status(404).send({ message: 'Book not found' });
     if (book.userEmail !== req.user.email) {
-      return res.status(403).send({ message: 'Tumi sudhu nijer boi edit korte parbe' });
+      return res.status(403).send({ message: 'You can only edit your own books' });
     }
 
     const { title, author, category, image, description, totalCopies } = req.body;
@@ -159,7 +163,7 @@ app.patch('/books/:id', verifyToken, async (req, res) => {
     if (description?.trim()) updates.description = description.trim();
     if (category !== undefined) {
       if (!CATEGORIES.includes(category)) {
-        return res.status(400).send({ message: 'Category valid na' });
+        return res.status(400).send({ message: 'Invalid category' });
       }
       updates.category = category;
     }
@@ -168,11 +172,11 @@ app.patch('/books/:id', verifyToken, async (req, res) => {
       const newTotal = Number(totalCopies);
       const borrowed = book.totalCopies - book.availableCopies;
       if (!Number.isInteger(newTotal) || newTotal < 1) {
-        return res.status(400).send({ message: 'Total copies kombe kom 1 hote hobe' });
+        return res.status(400).send({ message: 'Total copies must be at least 1' });
       }
       if (newTotal < borrowed) {
         return res.status(400).send({
-          message: `Ekhon ${borrowed} ta copy borrow kora ache, tai total ${borrowed} er niche namano jabe na`,
+          message: `${borrowed} copies are currently borrowed, so total copies cannot go below ${borrowed}`,
         });
       }
       updates.totalCopies = newTotal;
@@ -180,7 +184,7 @@ app.patch('/books/:id', verifyToken, async (req, res) => {
     }
 
     if (Object.keys(updates).length === 0) {
-      return res.status(400).send({ message: 'Update korar moto kichu pawa jayni' });
+      return res.status(400).send({ message: 'Nothing to update' });
     }
 
     const result = await booksCollection.updateOne(
@@ -190,7 +194,7 @@ app.patch('/books/:id', verifyToken, async (req, res) => {
     res.send(result);
   } catch (err) {
     console.error(err);
-    res.status(500).send({ message: 'Book update korte problem hoyeche' });
+    res.status(500).send({ message: 'Could not update the book' });
   }
 });
 
@@ -200,15 +204,15 @@ app.delete('/books/:id', verifyToken, async (req, res) => {
     if (!isValidId(id)) return res.status(400).send({ message: 'Invalid book id' });
 
     const book = await booksCollection.findOne({ _id: new ObjectId(id) });
-    if (!book) return res.status(404).send({ message: 'Book pawa jayni' });
+    if (!book) return res.status(404).send({ message: 'Book not found' });
     if (book.userEmail !== req.user.email) {
-      return res.status(403).send({ message: 'Tumi sudhu nijer boi delete korte parbe' });
+      return res.status(403).send({ message: 'You can only delete your own books' });
     }
 
     const activeBorrows = await borrowsCollection.countDocuments({ bookId: id });
     if (activeBorrows > 0) {
       return res.status(409).send({
-        message: 'Ei boi ekhon kew borrow kore ache, tai delete kora jabe na',
+        message: 'This book is currently borrowed, so it cannot be deleted',
       });
     }
 
@@ -216,7 +220,7 @@ app.delete('/books/:id', verifyToken, async (req, res) => {
     res.send(result);
   } catch (err) {
     console.error(err);
-    res.status(500).send({ message: 'Book delete korte problem hoyeche' });
+    res.status(500).send({ message: 'Could not delete the book' });
   }
 });
 
@@ -228,14 +232,14 @@ app.post('/borrows', verifyToken, async (req, res) => {
     }
 
     const book = await booksCollection.findOne({ _id: new ObjectId(bookId) });
-    if (!book) return res.status(404).send({ message: 'Book pawa jayni' });
+    if (!book) return res.status(404).send({ message: 'Book not found' });
 
     const already = await borrowsCollection.findOne({
       bookId,
       userEmail: req.user.email,
     });
     if (already) {
-      return res.status(409).send({ message: 'Tumi ei boi ta already borrow korecho' });
+      return res.status(409).send({ message: 'You have already borrowed this book' });
     }
 
     const updated = await booksCollection.findOneAndUpdate(
@@ -244,7 +248,7 @@ app.post('/borrows', verifyToken, async (req, res) => {
       { returnDocument: 'after' }
     );
     if (!updated) {
-      return res.status(400).send({ message: 'Not Available: kono copy baki nei' });
+      return res.status(400).send({ message: 'Not Available: no copies left' });
     }
 
     const borrowDate = new Date();
@@ -272,7 +276,7 @@ app.post('/borrows', verifyToken, async (req, res) => {
     }
   } catch (err) {
     console.error(err);
-    res.status(500).send({ message: 'Borrow korte problem hoyeche' });
+    res.status(500).send({ message: 'Could not borrow the book' });
   }
 });
 
@@ -285,7 +289,7 @@ app.get('/borrows', verifyToken, async (req, res) => {
     res.send(result);
   } catch (err) {
     console.error(err);
-    res.status(500).send({ message: 'Borrow list load korte problem hoyeche' });
+    res.status(500).send({ message: 'Could not load your borrows' });
   }
 });
 
@@ -295,9 +299,9 @@ app.delete('/borrows/:id', verifyToken, async (req, res) => {
     if (!isValidId(id)) return res.status(400).send({ message: 'Invalid borrow id' });
 
     const borrow = await borrowsCollection.findOne({ _id: new ObjectId(id) });
-    if (!borrow) return res.status(404).send({ message: 'Borrow record pawa jayni' });
+    if (!borrow) return res.status(404).send({ message: 'Borrow record not found' });
     if (borrow.userEmail !== req.user.email) {
-      return res.status(403).send({ message: 'Eta tomar borrow na' });
+      return res.status(403).send({ message: 'This borrow does not belong to you' });
     }
 
     await borrowsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -306,10 +310,10 @@ app.delete('/borrows/:id', verifyToken, async (req, res) => {
       { $inc: { availableCopies: 1 } }
     );
 
-    res.send({ message: 'Boi ferot deya hoyeche' });
+    res.send({ message: 'Book returned successfully' });
   } catch (err) {
     console.error(err);
-    res.status(500).send({ message: 'Return korte problem hoyeche' });
+    res.status(500).send({ message: 'Could not return the book' });
   }
 });
 
