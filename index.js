@@ -50,11 +50,7 @@ const verifyToken = (req, res, next) => {
 
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) {
-      // TEMP DEBUG: 403 fix hole ei duita line theke err.message soriye dio
-      console.error('JWT error:', err.message);
-      return res
-        .status(403)
-        .send({ message: `Session expired (${err.message}). Please login again` });
+      return res.status(403).send({ message: 'Session expired. Please login again' });
     }
     req.user = { email: decoded.email, name: decoded.name };
     next();
@@ -94,7 +90,7 @@ app.get('/books', requireAuthIfEmail, async (req, res) => {
   }
 });
 
-app.get('/books/:id', async (req, res) => {
+app.get('/books/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     if (!isValidId(id)) return res.status(400).send({ message: 'Invalid book id' });
