@@ -50,7 +50,7 @@ const verifyToken = (req, res, next) => {
 
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) {
-      return res.status(403).send({ message: 'Forbidden: token valid na ba expire hoye geche' });
+      return res.status(403).send({ message: 'Session expired. Please login again' });
     }
     req.user = { email: decoded.email, name: decoded.name };
     next();
@@ -90,7 +90,6 @@ app.get('/books', requireAuthIfEmail, async (req, res) => {
   }
 });
 
-// verifyToken soriye deya hoyeche jate publically book details dekha jay
 app.get('/books/:id', async (req, res) => {
   try {
     const { id } = req.params;
